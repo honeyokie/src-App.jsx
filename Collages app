@@ -1,0 +1,597 @@
+import { useState, useEffect, useRef } from "react";
+
+// ── Themes ────────────────────────────────────────────────────────────────────
+const THEMES = [
+  { id:"galaxy", name:"Galaxy", emoji:"🌌", bg:"#0d0f1a", bgStyle:{background:"#0d0f1a"}, card:"#13162a", cardHover:"#181c32", border:"#1e2340", text:"#e8eaff", muted:"#6a6f9a", accent:"#7c6aff", accent2:"#ff6a8e", accent3:"#5effd8" },
+  { id:"aurora", name:"Aurora", emoji:"🌿", bg:"#0a1a14", bgStyle:{background:"linear-gradient(135deg,#0a1a14 0%,#0d1f2d 50%,#0a1520 100%)"}, card:"#0f2219", cardHover:"#142b20", border:"#1a3528", text:"#d4f5e8", muted:"#4a8a6a", accent:"#2ecc8a", accent2:"#7affd4", accent3:"#ffd96a" },
+  { id:"sunset", name:"Sunset", emoji:"🌅", bg:"#1a0e0a", bgStyle:{background:"linear-gradient(160deg,#1a0e0a 0%,#1f1018 50%,#1a0f0e 100%)"}, card:"#211410", cardHover:"#2a1a14", border:"#3a2018", text:"#ffeedd", muted:"#8a5a4a", accent:"#ff7043", accent2:"#ffb347", accent3:"#ff6a8e" },
+  { id:"ocean", name:"Ocean", emoji:"🌊", bg:"#060e1a", bgStyle:{background:"linear-gradient(160deg,#060e1a 0%,#071422 60%,#060f1e 100%)"}, card:"#0a1525", cardHover:"#0d1c30", border:"#102440", text:"#d0eeff", muted:"#3a6a9a", accent:"#2196f3", accent2:"#00bcd4", accent3:"#64ffda" },
+  { id:"lavender", name:"Lavender", emoji:"💜", bg:"#110d1a", bgStyle:{background:"linear-gradient(140deg,#110d1a 0%,#160f22 50%,#110d1f 100%)"}, card:"#18102a", cardHover:"#1e1432", border:"#2a1a40", text:"#ede0ff", muted:"#7a5a9a", accent:"#b06aff", accent2:"#ff6adb", accent3:"#a0f0c0" },
+  { id:"light", name:"Light", emoji:"☀️", bg:"#f5f5f8", bgStyle:{background:"#f5f5f8"}, card:"#ffffff", cardHover:"#f0f0f5", border:"#e0e0ea", text:"#1a1a2e", muted:"#8a8aaa", accent:"#6c47ff", accent2:"#ff4488", accent3:"#00c9a0" },
+  { id:"midnight", name:"Midnight", emoji:"🌙", bg:"#000000", bgStyle:{background:"#000000"}, card:"#0d0d0d", cardHover:"#141414", border:"#222222", text:"#e8e8e8", muted:"#555555", accent:"#ffffff", accent2:"#aaaaaa", accent3:"#666666" },
+  { id:"rose", name:"Rose", emoji:"🌸", bg:"#1a0d12", bgStyle:{background:"linear-gradient(150deg,#1a0d12 0%,#1f0f18 60%,#1a0d14 100%)"}, card:"#220f18", cardHover:"#2a1420", border:"#3a1828", text:"#ffe0ec", muted:"#9a5070", accent:"#ff4488", accent2:"#ff8fab", accent3:"#ffda6a" },
+];
+
+const FONTS = `@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:ital,wght@0,400;0,500;1,400&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,300&display=swap');`;
+const COURSE_COLORS = ["#7c6aff","#ff6a8e","#5effd8","#ffd96a","#ff9f6a","#6abaff","#c46aff","#6affb0"];
+const DAYS = ["Mon","Tue","Wed","Thu","Fri"];
+const NOTIF_HOUR = 7; // 7 AM
+
+// ── Notification Engine ───────────────────────────────────────────────────────
+function useNotifications(assignments, courses) {
+  const [permission, setPermission] = useState(typeof Notification !== "undefined" ? Notification.permission : "default");
+  const [notifLog, setNotifLog] = useState([]); // for in-app bell display
+  const timerRef = useRef(null);
+
+  const requestPermission = async () => {
+    if (typeof Notification === "undefined") return;
+    const result = await Notification.requestPermission();
+    setPermission(result);
+    return result;
+  };
+
+  const fireNotification = (title, body, tag) => {
+    if (permission !== "granted") return;
+    try {
+      new Notification(title, { body, tag, icon: "📚", badge: "📚" });
+    } catch(e) {}
+    setNotifLog(prev => {
+      const exists = prev.find(n => n.tag === tag);
+      if (exists) return prev;
+      return [{ title, body, tag, time: new Date() }, ...prev].slice(0, 20);
+    });
+  };
+
+  const checkAndFire = () => {
+    if (permission !== "granted") return;
+    const now = new Date();
+    const todayStr = now.toISOString().slice(0, 10);
+    const hour = now.getHours();
+
+    assignments.forEach(a => {
+      if (a.done) return;
+      const due = new Date(a.due + "T00:00:00");
+      const daysLeft = Math.ceil((due - now) / 86400000);
+      const course = courses.find(c => String(c.id) === String(a.courseId));
+      const courseLabel = course ? ` (${course.name})` : "";
+
+      // Day-of at 7 AM
+      if (a.due === todayStr && hour >= NOTIF_HOUR) {
+        fireNotification(
+          "📅 Due Today!",
+          `"${a.title}"${courseLabel} is due today!`,
+          `due-today-${a.id}-${todayStr}`
+        );
+      }
+      // 1 day before at 7 AM
+      if (daysLeft === 1 && hour >= NOTIF_HOUR) {
+        fireNotification(
+          "⚠️ Due Tomorrow",
+          `"${a.title}"${courseLabel} is due tomorrow!`,
+          `due-1day-${a.id}-${a.due}`
+        );
+      }
+      // 3 days before at 7 AM
+      if (daysLeft === 3 && hour >= NOTIF_HOUR) {
+        fireNotification(
+          "📌 Due in 3 Days",
+          `"${a.title}"${courseLabel} is due in 3 days.`,
+          `due-3day-${a.id}-${a.due}`
+        );
+      }
+    });
+  };
+
+  useEffect(() => {
+    if (permission !== "granted") return;
+    checkAndFire();
+    // Check every 30 minutes
+    timerRef.current = setInterval(checkAndFire, 30 * 60 * 1000);
+    return () => clearInterval(timerRef.current);
+  }, [permission, assignments]);
+
+  return { permission, requestPermission, notifLog, checkAndFire };
+}
+
+// ── Notification Bell ─────────────────────────────────────────────────────────
+function NotifBell({ permission, requestPermission, notifLog, onTest, T }) {
+  const [open, setOpen] = useState(false);
+  const unread = notifLog.length;
+
+  return (
+    <div style={{ position:"relative" }}>
+      <button onClick={()=>setOpen(!open)} style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:10, padding:"7px 12px", color:T.text, fontFamily:"'Syne',sans-serif", fontWeight:700, fontSize:16, cursor:"pointer", position:"relative", display:"flex", alignItems:"center", gap:6 }}>
+        🔔
+        {permission === "granted" && unread > 0 && (
+          <span style={{ position:"absolute", top:-4, right:-4, background:T.accent2, color:"#fff", borderRadius:"50%", width:18, height:18, fontSize:10, display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Syne',sans-serif", fontWeight:800 }}>{unread > 9 ? "9+" : unread}</span>
+        )}
+        {permission !== "granted" && (
+          <span style={{ position:"absolute", top:-4, right:-4, background:"#ff4444", color:"#fff", borderRadius:"50%", width:14, height:14, fontSize:9, display:"flex", alignItems:"center", justifyContent:"center" }}>!</span>
+        )}
+      </button>
+
+      {open && (
+        <div style={{ position:"absolute", right:0, top:"calc(100% + 8px)", background:T.card, border:`1px solid ${T.border}`, borderRadius:16, padding:18, zIndex:200, width:320, boxShadow:`0 8px 32px #00000077` }}>
+          <div style={{ fontFamily:"'Syne',sans-serif", fontWeight:800, fontSize:15, color:T.text, marginBottom:14, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+            🔔 Notifications
+            <button onClick={()=>setOpen(false)} style={{ background:"none", border:"none", color:T.muted, cursor:"pointer", fontSize:18 }}>×</button>
+          </div>
+
+          {permission !== "granted" ? (
+            <div>
+              <div style={{ background:T.accent+"18", border:`1px solid ${T.accent}33`, borderRadius:10, padding:14, marginBottom:14 }}>
+                <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:T.text, lineHeight:1.6, marginBottom:10 }}>
+                  Enable notifications to get reminders:<br/>
+                  <span style={{ color:T.accent }}>• 3 days before due date</span><br/>
+                  <span style={{ color:T.accent2 }}>• 1 day before due date</span><br/>
+                  <span style={{ color:T.accent3 }}>• Morning of due date (7 AM)</span>
+                </div>
+                <button onClick={async()=>{ await requestPermission(); }} style={{ width:"100%", background:`linear-gradient(135deg,${T.accent},${T.accent2})`, color:"#fff", border:"none", borderRadius:8, padding:"10px 0", fontFamily:"'Syne',sans-serif", fontWeight:700, fontSize:13, cursor:"pointer", boxShadow:`0 0 20px ${T.accent}44` }}>
+                  Enable Notifications
+                </button>
+              </div>
+              {permission === "denied" && (
+                <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:T.accent2, textAlign:"center" }}>
+                  Notifications are blocked. Please allow them in your browser settings.
+                </div>
+              )}
+            </div>
+          ) : (
+            <div>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:T.accent, letterSpacing:1 }}>● ACTIVE — checks every 30 min</span>
+                <button onClick={onTest} style={{ background:T.accent+"22", color:T.accent, border:`1px solid ${T.accent}44`, borderRadius:6, padding:"4px 10px", fontFamily:"'DM Mono',monospace", fontSize:11, cursor:"pointer" }}>Test</button>
+              </div>
+              <div style={{ background:T.cardHover, borderRadius:10, padding:"8px 12px", marginBottom:12, fontFamily:"'DM Sans',sans-serif", fontSize:12, color:T.muted, lineHeight:1.7 }}>
+                Reminders fire at <span style={{ color:T.text }}>7:00 AM</span> on:<br/>
+                • Day assignment is due<br/>
+                • 1 day before due date<br/>
+                • 3 days before due date
+              </div>
+              {notifLog.length === 0 ? (
+                <div style={{ textAlign:"center", padding:"20px 0", color:T.muted, fontFamily:"'DM Sans',sans-serif", fontSize:13 }}>No notifications sent yet.</div>
+              ) : (
+                <div style={{ display:"flex", flexDirection:"column", gap:6, maxHeight:200, overflowY:"auto" }}>
+                  {notifLog.map((n,i)=>(
+                    <div key={i} style={{ background:T.cardHover, borderRadius:8, padding:"8px 12px", borderLeft:`3px solid ${T.accent}` }}>
+                      <div style={{ fontFamily:"'DM Sans',sans-serif", fontWeight:600, fontSize:12, color:T.text }}>{n.title}</div>
+                      <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:11, color:T.muted, marginTop:2 }}>{n.body}</div>
+                      <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:T.muted, marginTop:3 }}>{n.time.toLocaleTimeString()}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Theme Picker ──────────────────────────────────────────────────────────────
+function ThemePicker({ current, onChange, T }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ position:"relative" }}>
+      <button onClick={()=>setOpen(!open)} style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:10, padding:"7px 14px", color:T.text, fontFamily:"'Syne',sans-serif", fontWeight:700, fontSize:13, cursor:"pointer", display:"flex", alignItems:"center", gap:6 }}>
+        {THEMES.find(t=>t.id===current)?.emoji} Theme
+      </button>
+      {open && (
+        <div style={{ position:"absolute", right:0, top:"calc(100% + 8px)", background:T.card, border:`1px solid ${T.border}`, borderRadius:14, padding:14, zIndex:100, width:280, boxShadow:`0 8px 32px #00000066` }}>
+          <div style={{ fontFamily:"'Syne',sans-serif", fontWeight:700, fontSize:13, color:T.muted, marginBottom:12, letterSpacing:1 }}>CHOOSE BACKGROUND</div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8 }}>
+            {THEMES.map(t=>(
+              <button key={t.id} onClick={()=>{ onChange(t.id); setOpen(false); }} style={{ background:"none", border:`2px solid ${current===t.id?T.accent:T.border}`, borderRadius:10, padding:"8px 4px", cursor:"pointer", display:"flex", flexDirection:"column", alignItems:"center", gap:4, transition:"all 0.15s", boxShadow:current===t.id?`0 0 12px ${T.accent}55`:"none" }}>
+                <div style={{ width:36, height:36, borderRadius:8, ...t.bgStyle, border:`1px solid ${t.border}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:18 }}>{t.emoji}</div>
+                <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:10, color:current===t.id?T.accent:T.muted, fontWeight:current===t.id?700:400 }}>{t.name}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Reusable UI ───────────────────────────────────────────────────────────────
+function Badge({ color, children }) {
+  return <span style={{ background:color+"22", color, border:`1px solid ${color}44`, borderRadius:6, padding:"2px 10px", fontSize:11, fontFamily:"'DM Mono',monospace", fontWeight:500, letterSpacing:1, textTransform:"uppercase" }}>{children}</span>;
+}
+function Btn({ onClick, disabled, style={}, children }) {
+  return <button onClick={onClick} disabled={disabled} style={{ border:"none", borderRadius:10, padding:"9px 20px", fontFamily:"'Syne',sans-serif", fontWeight:700, fontSize:13, cursor:disabled?"default":"pointer", transition:"all 0.2s", ...style }}>{children}</button>;
+}
+function TabBtn({ active, onClick, T, children }) {
+  return <button onClick={onClick} style={{ background:active?T.accent:"transparent", color:active?"#fff":T.muted, border:"none", borderRadius:10, padding:"9px 22px", fontFamily:"'Syne',sans-serif", fontWeight:700, fontSize:14, cursor:"pointer", transition:"all 0.2s", boxShadow:active?`0 0 20px ${T.accent}44`:"none", letterSpacing:0.5 }}>{children}</button>;
+}
+
+// ── Canvas Setup ──────────────────────────────────────────────────────────────
+function CanvasSetup({ onConnect, T }) {
+  const [domain, setDomain] = useState("");
+  const [token, setToken] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const steps = [
+    { n:1, text:"Open Canvas and click your profile picture (top-left)" },
+    { n:2, text:'Go to Settings → scroll to "Approved Integrations"' },
+    { n:3, text:'Click + New Access Token, give it a name like "StudyOS"' },
+    { n:4, text:"Copy the token shown (you won't see it again!)" },
+  ];
+  const handleConnect = async () => {
+    if (!domain || !token) { setError("Please fill in both fields."); return; }
+    setLoading(true); setError("");
+    const base = domain.replace(/\/$/, "").replace(/^(?!https?:)/, "https://");
+    try {
+      const res = await fetch(`${base}/api/v1/users/self`, { headers:{ "Authorization":`Bearer ${token}` } });
+      if (!res.ok) throw new Error(`Canvas returned ${res.status}`);
+      const user = await res.json();
+      onConnect({ base, token, userName: user.name || "Student" });
+    } catch { setError("Could not connect. Check your domain and token, then try again."); }
+    setLoading(false);
+  };
+  const iS = { width:"100%", background:T.bg, border:`1px solid ${T.border}`, borderRadius:8, padding:"9px 13px", color:T.text, fontFamily:"'DM Sans',sans-serif", fontSize:14, outline:"none", boxSizing:"border-box" };
+  return (
+    <div style={{ minHeight:"100vh", ...T.bgStyle, display:"flex", alignItems:"center", justifyContent:"center", padding:24 }}>
+      <div style={{ maxWidth:520, width:"100%" }}>
+        <div style={{ textAlign:"center", marginBottom:36 }}>
+          <div style={{ fontFamily:"'Syne',sans-serif", fontWeight:800, fontSize:38, color:T.text, letterSpacing:-1 }}>study<span style={{ color:T.accent }}>os</span></div>
+          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:T.muted, marginTop:4, letterSpacing:2 }}>CONNECT YOUR CANVAS ACCOUNT</div>
+        </div>
+        <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:16, padding:24, marginBottom:24 }}>
+          <div style={{ fontFamily:"'Syne',sans-serif", fontWeight:700, fontSize:15, color:T.accent, marginBottom:16 }}>How to get your Canvas token</div>
+          {steps.map(s=>(
+            <div key={s.n} style={{ display:"flex", gap:14, marginBottom:14, alignItems:"flex-start" }}>
+              <div style={{ width:26, height:26, borderRadius:"50%", background:T.accent+"33", border:`1.5px solid ${T.accent}55`, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                <span style={{ fontFamily:"'Syne',sans-serif", fontWeight:800, fontSize:12, color:T.accent }}>{s.n}</span>
+              </div>
+              <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:T.text, lineHeight:1.6, paddingTop:2 }}>{s.text}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:16, padding:24 }}>
+          <div style={{ marginBottom:14 }}>
+            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:T.muted, marginBottom:6, letterSpacing:1 }}>CANVAS DOMAIN</div>
+            <input placeholder="e.g. myuniversity.instructure.com" value={domain} onChange={e=>setDomain(e.target.value)} style={iS}/>
+          </div>
+          <div style={{ marginBottom:20 }}>
+            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:T.muted, marginBottom:6, letterSpacing:1 }}>ACCESS TOKEN</div>
+            <input type="password" placeholder="Paste your token here" value={token} onChange={e=>setToken(e.target.value)} style={iS}/>
+          </div>
+          {error && <div style={{ background:T.accent2+"22", border:`1px solid ${T.accent2}44`, borderRadius:8, padding:"10px 14px", color:T.accent2, fontFamily:"'DM Sans',sans-serif", fontSize:13, marginBottom:14 }}>{error}</div>}
+          <Btn onClick={handleConnect} disabled={loading} style={{ width:"100%", background:loading?T.muted:`linear-gradient(135deg,${T.accent},${T.accent2})`, color:"#fff", boxShadow:loading?"none":`0 0 24px ${T.accent}44`, fontSize:15 }}>
+            {loading?"Connecting…":"🔗 Connect Canvas"}
+          </Btn>
+          <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:T.muted, marginTop:12, textAlign:"center" }}>Your token stays in your browser only.</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Schedule View ─────────────────────────────────────────────────────────────
+function ScheduleView({ courses, T }) {
+  const hours = Array.from({length:10},(_,i)=>i+8);
+  const label = h => h===12?"12 PM":h<12?`${h} AM`:`${h-12} PM`;
+  const placed = [];
+  courses.forEach(c=>(c.sections||[]).forEach(sec=>(sec.slots||[]).forEach(slot=>placed.push({...slot,name:c.name,color:c.color}))));
+  return (
+    <div style={{ overflowX:"auto" }}>
+      <div style={{ display:"grid", gridTemplateColumns:"54px repeat(5,1fr)", minWidth:540 }}>
+        <div/>
+        {DAYS.map(d=><div key={d} style={{ textAlign:"center", padding:"6px 0", fontFamily:"'Syne',sans-serif", fontWeight:700, fontSize:12, color:T.muted, letterSpacing:2 }}>{d}</div>)}
+        {hours.map(h=>(
+          <>
+            <div key={h+"l"} style={{ color:T.muted, fontFamily:"'DM Mono',monospace", fontSize:10, paddingTop:5, textAlign:"right", paddingRight:8 }}>{label(h)}</div>
+            {DAYS.map(day=>{
+              const items = placed.filter(p=>p.days?.includes(day) && p.startHour===h);
+              return (
+                <div key={day+h} style={{ borderTop:`1px solid ${T.border}`, borderLeft:`1px solid ${T.border}`, minHeight:50, padding:3 }}>
+                  {items.map((item,i)=>(
+                    <div key={i} style={{ background:item.color+"22", borderLeft:`4px solid ${item.color}`, borderRadius:7, padding:"5px 7px", fontSize:11, color:item.color, fontFamily:"'DM Sans',sans-serif", fontWeight:700 }}>{item.name}</div>
+                  ))}
+                </div>
+              );
+            })}
+          </>
+        ))}
+      </div>
+      {placed.length===0 && <div style={{ textAlign:"center", padding:"32px 0", color:T.muted, fontFamily:"'DM Sans',sans-serif", fontSize:14 }}>Canvas doesn't always expose section times via API.<br/><span style={{ fontSize:12 }}>Check your Assignments tab!</span></div>}
+    </div>
+  );
+}
+
+// ── Assignments View ──────────────────────────────────────────────────────────
+function AssignmentsView({ assignments, courses, onToggle, onAdd, T }) {
+  const [form, setForm] = useState({ title:"", courseId:"", due:"", priority:"medium" });
+  const [showForm, setShowForm] = useState(false);
+  const priorityColor = { high:"#ff4444", medium:"#ffd96a", low:"#5effd8" };
+  const sorted = [...assignments].sort((a,b)=>new Date(a.due)-new Date(b.due));
+  const iS = { background:T.bg, border:`1px solid ${T.border}`, borderRadius:8, padding:"9px 12px", color:T.text, fontFamily:"'DM Sans',sans-serif", fontSize:14, outline:"none" };
+
+  const getDaysLeft = (due) => Math.ceil((new Date(due+"T00:00:00") - new Date()) / 86400000);
+
+  return (
+    <div>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
+        <span style={{ fontFamily:"'Syne',sans-serif", fontSize:18, fontWeight:800, color:T.text }}>Assignments</span>
+        <Btn onClick={()=>setShowForm(!showForm)} style={{ background:T.accent, color:"#fff", boxShadow:`0 0 18px ${T.accent}44` }}>+ Add</Btn>
+      </div>
+      {showForm && (
+        <div style={{ background:T.cardHover, border:`1px solid ${T.border}`, borderRadius:14, padding:18, marginBottom:20 }}>
+          <div style={{ display:"flex", flexWrap:"wrap", gap:10 }}>
+            <input placeholder="Assignment title" value={form.title} onChange={e=>setForm({...form,title:e.target.value})} style={{ ...iS, flex:2, minWidth:150 }}/>
+            <select value={form.courseId} onChange={e=>setForm({...form,courseId:e.target.value})} style={{ ...iS, flex:1, minWidth:130 }}>
+              <option value="">Course…</option>
+              {courses.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            <input type="date" value={form.due} onChange={e=>setForm({...form,due:e.target.value})} style={{ ...iS, flex:1, minWidth:130 }}/>
+            <select value={form.priority} onChange={e=>setForm({...form,priority:e.target.value})} style={iS}>
+              <option value="high">🔴 High</option>
+              <option value="medium">🟡 Medium</option>
+              <option value="low">🟢 Low</option>
+            </select>
+            <Btn onClick={()=>{ if(form.title&&form.due){ onAdd({...form,id:Date.now(),done:false}); setForm({title:"",courseId:"",due:"",priority:"medium"}); setShowForm(false); }}} style={{ background:T.accent, color:"#fff" }}>Save</Btn>
+          </div>
+        </div>
+      )}
+      <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+        {sorted.map(a=>{
+          const course = courses.find(c=>String(c.id)===String(a.courseId));
+          const daysLeft = getDaysLeft(a.due);
+          const urgent = !a.done && daysLeft <= 1;
+          const soon = !a.done && daysLeft <= 3 && daysLeft > 1;
+          return (
+            <div key={a.id} onClick={()=>onToggle(a.id)} style={{ background:T.card, border:`1px solid ${urgent?T.accent2+"66":soon?T.accent+"44":T.border}`, borderLeft:`4px solid ${a.done?T.muted:priorityColor[a.priority]||T.accent}`, borderRadius:12, padding:"13px 18px", display:"flex", alignItems:"center", gap:14, cursor:"pointer", opacity:a.done?0.5:1, transition:"all 0.2s", boxShadow:urgent?`0 0 12px ${T.accent2}22`:soon?`0 0 12px ${T.accent}11`:"none" }}>
+              <div style={{ width:20, height:20, borderRadius:6, border:`2px solid ${a.done?T.accent3:T.muted}`, background:a.done?T.accent3+"33":"transparent", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                {a.done && <span style={{ color:T.accent3, fontSize:12 }}>✓</span>}
+              </div>
+              <div style={{ flex:1 }}>
+                <div style={{ fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:T.text, fontSize:15, textDecoration:a.done?"line-through":"none" }}>{a.title}</div>
+                <div style={{ display:"flex", gap:8, marginTop:3, flexWrap:"wrap", alignItems:"center" }}>
+                  {course && <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:course.color }}>{course.name}</span>}
+                  {a.fromCanvas && <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:T.accent, background:T.accent+"15", borderRadius:4, padding:"1px 6px" }}>Canvas</span>}
+                  {urgent && !a.done && <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:T.accent2, background:T.accent2+"15", borderRadius:4, padding:"1px 6px" }}>🔔 Notifying</span>}
+                  {soon && !a.done && <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:T.accent, background:T.accent+"15", borderRadius:4, padding:"1px 6px" }}>🔔 Notifying</span>}
+                </div>
+              </div>
+              <div style={{ textAlign:"right" }}>
+                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:daysLeft<=1?T.accent2:daysLeft<=3?T.accent:T.muted }}>
+                  {daysLeft<0?"Overdue":daysLeft===0?"Today!":daysLeft===1?"Tomorrow":`${daysLeft}d left`}
+                </div>
+                <div style={{ fontSize:10, color:T.muted, marginTop:2 }}>{a.due}</div>
+              </div>
+              <Badge color={priorityColor[a.priority]||T.muted}>{a.priority||"—"}</Badge>
+            </div>
+          );
+        })}
+        {sorted.length===0 && <div style={{ textAlign:"center", padding:"32px 0", color:T.muted, fontFamily:"'DM Sans',sans-serif" }}>No assignments yet.</div>}
+      </div>
+    </div>
+  );
+}
+
+// ── Notes View ────────────────────────────────────────────────────────────────
+function NotesView({ courses, T }) {
+  const [notes, setNotes] = useState([{ id:1, courseId:null, title:"Welcome to StudyOS Notes", body:"Type your lecture notes here.\n\nThen hit ✨ AI Summary to get a quick bullet-point study guide!", date:"2026-03-03" }]);
+  const [selected, setSelected] = useState(notes[0]);
+  const [editing, setEditing] = useState(false);
+  const [editBody, setEditBody] = useState("");
+  const [aiSummary, setAiSummary] = useState("");
+  const [loadingAI, setLoadingAI] = useState(false);
+  const [newNote, setNewNote] = useState(false);
+  const [newForm, setNewForm] = useState({ title:"", courseId:"", body:"" });
+
+  const summarize = async () => {
+    if(!selected) return;
+    setLoadingAI(true); setAiSummary("");
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages",{ method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:1000, messages:[{ role:"user", content:`Summarize these college lecture notes into 4-6 concise bullet points ideal for exam review. Start each bullet with a relevant emoji. Use plain text (• emoji Key point: explanation).\n\nTitle: "${selected.title}"\n\n${selected.body}` }] }) });
+      const data = await res.json();
+      setAiSummary(data.content?.map(b=>b.text||"").join("")||"Could not generate summary.");
+    } catch { setAiSummary("⚠️ Could not connect to AI."); }
+    setLoadingAI(false);
+  };
+
+  const taS = { background:T.bg, border:`1px solid ${T.border}`, borderRadius:8, padding:"10px 13px", color:T.text, fontFamily:"'DM Mono',monospace", fontSize:13, resize:"vertical", outline:"none" };
+
+  return (
+    <div style={{ display:"flex", gap:16, minHeight:420 }}>
+      <div style={{ width:190, flexShrink:0 }}>
+        <Btn onClick={()=>setNewNote(true)} style={{ width:"100%", background:T.accent, color:"#fff", boxShadow:`0 0 18px ${T.accent}44`, marginBottom:12 }}>+ New Note</Btn>
+        <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+          {notes.map(n=>{
+            const c = courses.find(c=>String(c.id)===String(n.courseId));
+            return (
+              <div key={n.id} onClick={()=>{ setSelected(n); setAiSummary(""); setEditing(false); }} style={{ background:selected?.id===n.id?T.cardHover:"transparent", border:`1px solid ${selected?.id===n.id?T.accent+"55":T.border}`, borderRadius:10, padding:"10px 12px", cursor:"pointer" }}>
+                <div style={{ fontFamily:"'DM Sans',sans-serif", fontWeight:500, fontSize:13, color:T.text, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{n.title}</div>
+                {c && <div style={{ fontSize:10, color:c.color, marginTop:3, fontFamily:"'DM Mono',monospace" }}>{c.name}</div>}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <div style={{ flex:1, background:T.card, borderRadius:16, border:`1px solid ${T.border}`, padding:24 }}>
+        {newNote ? (
+          <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+            <div style={{ fontFamily:"'Syne',sans-serif", fontWeight:800, fontSize:18, color:T.text }}>New Note</div>
+            <input placeholder="Title" value={newForm.title} onChange={e=>setNewForm({...newForm,title:e.target.value})} style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:8, padding:"9px 13px", color:T.text, fontFamily:"'Syne',sans-serif", fontWeight:700, fontSize:16, outline:"none" }}/>
+            <select value={newForm.courseId} onChange={e=>setNewForm({...newForm,courseId:e.target.value})} style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:8, padding:"9px 13px", color:T.text, fontFamily:"'DM Sans',sans-serif", fontSize:14, outline:"none" }}>
+              <option value="">Select course…</option>
+              {courses.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            <textarea placeholder="Write your notes…" value={newForm.body} onChange={e=>setNewForm({...newForm,body:e.target.value})} rows={8} style={taS}/>
+            <div style={{ display:"flex", gap:10 }}>
+              <Btn onClick={()=>{ if(newForm.title&&newForm.body){ const n={id:Date.now(),courseId:newForm.courseId||null,title:newForm.title,body:newForm.body,date:new Date().toISOString().slice(0,10)}; setNotes(p=>[...p,n]); setSelected(n); setNewNote(false); setNewForm({title:"",courseId:"",body:""}); }}} style={{ background:T.accent, color:"#fff" }}>Save</Btn>
+              <Btn onClick={()=>setNewNote(false)} style={{ background:"transparent", color:T.muted, border:`1px solid ${T.border}` }}>Cancel</Btn>
+            </div>
+          </div>
+        ) : selected ? (
+          <div>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:16, flexWrap:"wrap", gap:10 }}>
+              <div>
+                <div style={{ fontFamily:"'Syne',sans-serif", fontWeight:800, fontSize:20, color:T.text }}>{selected.title}</div>
+                <div style={{ display:"flex", gap:8, marginTop:6 }}>
+                  {courses.find(c=>String(c.id)===String(selected.courseId)) && <Badge color={courses.find(c=>String(c.id)===String(selected.courseId)).color}>{courses.find(c=>String(c.id)===String(selected.courseId)).name}</Badge>}
+                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:T.muted }}>{selected.date}</span>
+                </div>
+              </div>
+              <div style={{ display:"flex", gap:8 }}>
+                <Btn onClick={()=>{ setEditing(!editing); setEditBody(selected.body); }} style={{ background:"transparent", color:T.muted, border:`1px solid ${T.border}`, padding:"7px 14px" }}>{editing?"Cancel":"Edit"}</Btn>
+                <Btn onClick={summarize} disabled={loadingAI} style={{ background:loadingAI?T.muted:`linear-gradient(135deg,${T.accent},${T.accent2})`, color:"#fff", boxShadow:loadingAI?"none":`0 0 18px ${T.accent}44`, padding:"7px 14px" }}>
+                  {loadingAI?"✨ Summarizing…":"✨ AI Summary"}
+                </Btn>
+              </div>
+            </div>
+            {editing ? (
+              <div>
+                <textarea value={editBody} onChange={e=>setEditBody(e.target.value)} rows={10} style={{ ...taS, width:"100%", border:`1px solid ${T.accent}55`, boxSizing:"border-box" }}/>
+                <Btn onClick={()=>{ setNotes(p=>p.map(n=>n.id===selected.id?{...n,body:editBody}:n)); setSelected(s=>({...s,body:editBody})); setEditing(false); }} style={{ marginTop:10, background:T.accent, color:"#fff" }}>Save Changes</Btn>
+              </div>
+            ) : (
+              <pre style={{ fontFamily:"'DM Mono',monospace", fontSize:13, color:T.text, lineHeight:1.7, whiteSpace:"pre-wrap", background:T.bg, borderRadius:10, padding:16, border:`1px solid ${T.border}`, margin:0 }}>{selected.body}</pre>
+            )}
+            {aiSummary && (
+              <div style={{ marginTop:20, background:`linear-gradient(135deg,${T.accent}11,${T.accent2}11)`, border:`1px solid ${T.accent}33`, borderRadius:12, padding:18 }}>
+                <div style={{ fontFamily:"'Syne',sans-serif", fontWeight:700, fontSize:14, color:T.accent, marginBottom:10 }}>✨ AI Study Summary</div>
+                <pre style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:T.text, lineHeight:1.8, whiteSpace:"pre-wrap", margin:0 }}>{aiSummary}</pre>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100%", color:T.muted, fontFamily:"'DM Sans',sans-serif" }}>Select or create a note</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Main App ──────────────────────────────────────────────────────────────────
+export default function App() {
+  const [themeId, setThemeId] = useState("galaxy");
+  const T = THEMES.find(t=>t.id===themeId);
+  const [canvasAuth, setCanvasAuth] = useState(null);
+  const [tab, setTab] = useState("assignments");
+  const [courses, setCourses] = useState([]);
+  const [assignments, setAssignments] = useState([]);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState("");
+  const [lastSync, setLastSync] = useState(null);
+
+  const { permission, requestPermission, notifLog, checkAndFire } = useNotifications(assignments, courses);
+
+  const syncCanvas = async (auth) => {
+    setSyncing(true); setSyncMsg("Fetching your courses…");
+    const { base, token } = auth;
+    const h = { "Authorization":`Bearer ${token}` };
+    try {
+      const cRes = await fetch(`${base}/api/v1/courses?enrollment_state=active&per_page=50`, { headers:h });
+      const cData = await cRes.json();
+      if (!Array.isArray(cData)) throw new Error("Unexpected response");
+      const mapped = cData.filter(c=>c.name&&!c.access_restricted_by_date).map((c,i)=>({ id:c.id, name:c.name, code:c.course_code||"", color:COURSE_COLORS[i%COURSE_COLORS.length], sections:[] }));
+      setCourses(mapped);
+      setSyncMsg(`Found ${mapped.length} courses. Fetching assignments…`);
+      const allA = [];
+      for (const course of mapped) {
+        try {
+          const aRes = await fetch(`${base}/api/v1/courses/${course.id}/assignments?per_page=30&order_by=due_at`, { headers:h });
+          const aData = await aRes.json();
+          if (Array.isArray(aData)) aData.forEach(a=>{ if(!a.due_at) return; allA.push({ id:a.id, title:a.name, courseId:course.id, due:a.due_at.slice(0,10), done:a.has_submitted_submissions||false, priority:"medium", fromCanvas:true }); });
+        } catch {}
+      }
+      setAssignments(allA);
+      setLastSync(new Date());
+      setSyncMsg(`✅ Synced ${mapped.length} courses & ${allA.length} assignments!`);
+      setTimeout(()=>setSyncMsg(""), 4000);
+    } catch(e) {
+      setSyncMsg("❌ Sync failed: " + e.message);
+      setTimeout(()=>setSyncMsg(""), 5000);
+    }
+    setSyncing(false);
+  };
+
+  const handleConnect = (auth) => { setCanvasAuth(auth); syncCanvas(auth); };
+  const toggleAssignment = (id) => setAssignments(p=>p.map(a=>a.id===id?{...a,done:!a.done}:a));
+  const addAssignment = (a) => setAssignments(p=>[...p,a]);
+  const done = assignments.filter(a=>a.done).length;
+  const total = assignments.length;
+
+  if (!canvasAuth) return (
+    <>
+      <style>{FONTS}</style>
+      <style>{`*{box-sizing:border-box;margin:0;padding:0;}body{background:${T.bg};}`}</style>
+      <CanvasSetup onConnect={handleConnect} T={T}/>
+    </>
+  );
+
+  return (
+    <>
+      <style>{FONTS}</style>
+      <style>{`*{box-sizing:border-box;margin:0;padding:0;}body{background:${T.bg};}input,select,textarea{outline:none;}input:focus,select:focus,textarea:focus{border-color:${T.accent}88!important;}::-webkit-scrollbar{width:6px;height:6px;}::-webkit-scrollbar-track{background:${T.bg};}::-webkit-scrollbar-thumb{background:${T.border};border-radius:3px;}`}</style>
+
+      <div style={{ minHeight:"100vh", ...T.bgStyle, color:T.text, paddingBottom:40 }}>
+        {/* Header */}
+        <div style={{ background:`linear-gradient(180deg,${T.accent}18 0%,transparent 100%)`, borderBottom:`1px solid ${T.border}`, padding:"16px 24px", display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10 }}>
+          <div>
+            <div style={{ fontFamily:"'Syne',sans-serif", fontWeight:800, fontSize:24, color:T.text, letterSpacing:-0.5 }}>
+              study<span style={{ color:T.accent }}>os</span>
+              <span style={{ fontSize:13, fontWeight:400, color:T.muted, marginLeft:12, fontFamily:"'DM Sans',sans-serif" }}>Hi, {canvasAuth.userName.split(" ")[0]} 👋</span>
+            </div>
+            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:T.accent, marginTop:2, letterSpacing:1 }}>
+              ● CANVAS CONNECTED
+              {lastSync && <span style={{ color:T.muted }}> · synced {lastSync.toLocaleTimeString()}</span>}
+            </div>
+          </div>
+          <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+            {syncMsg && <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:syncMsg.startsWith("✅")?T.accent3:syncMsg.startsWith("❌")?T.accent2:T.muted, maxWidth:220 }}>{syncMsg}</div>}
+
+            {/* Notification Bell */}
+            <NotifBell permission={permission} requestPermission={requestPermission} notifLog={notifLog} onTest={checkAndFire} T={T}/>
+
+            <ThemePicker current={themeId} onChange={setThemeId} T={T}/>
+            <Btn onClick={()=>syncCanvas(canvasAuth)} disabled={syncing} style={{ background:syncing?T.muted:T.card, color:T.text, border:`1px solid ${T.border}`, fontSize:12, padding:"7px 14px" }}>
+              {syncing?"⟳ Syncing…":"⟳ Sync"}
+            </Btn>
+            {total>0 && (
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <div style={{ textAlign:"right" }}>
+                  <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:T.muted }}>PROGRESS</div>
+                  <div style={{ fontFamily:"'Syne',sans-serif", fontWeight:700, fontSize:15, color:done===total?T.accent3:T.accent }}>{done}/{total}</div>
+                </div>
+                <div style={{ width:40, height:40, borderRadius:"50%", background:`conic-gradient(${T.accent} ${(done/total)*360}deg,${T.border} 0deg)`, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                  <div style={{ width:30, height:30, borderRadius:"50%", background:T.bg, display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Syne',sans-serif", fontWeight:800, fontSize:10, color:T.accent }}>{Math.round((done/total)*100)}%</div>
+                </div>
+              </div>
+            )}
+            <Btn onClick={()=>setCanvasAuth(null)} style={{ background:"transparent", color:T.muted, border:`1px solid ${T.border}`, padding:"6px 12px", fontSize:12 }}>Disconnect</Btn>
+          </div>
+        </div>
+
+        {/* Course pills */}
+        {courses.length>0 && (
+          <div style={{ padding:"12px 24px 0", display:"flex", flexWrap:"wrap", gap:8 }}>
+            {courses.map(c=>(
+              <div key={c.id} style={{ display:"flex", alignItems:"center", gap:6, background:c.color+"11", border:`1px solid ${c.color}33`, borderRadius:8, padding:"4px 12px" }}>
+                <div style={{ width:6, height:6, borderRadius:"50%", background:c.color }}/>
+                <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:T.text }}>{c.name}</span>
+                {c.code && <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:T.muted }}>{c.code}</span>}
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div style={{ maxWidth:920, margin:"0 auto", padding:"20px 20px 0" }}>
+          <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:14, padding:6, display:"inline-flex", gap:4, marginBottom:20 }}>
+            <TabBtn active={tab==="schedule"} onClick={()=>setTab("schedule")} T={T}>📅 Schedule</TabBtn>
+            <TabBtn active={tab==="assignments"} onClick={()=>setTab("assignments")} T={T}>✅ Assignments</TabBtn>
+            <TabBtn active={tab==="notes"} onClick={()=>setTab("notes")} T={T}>📝 Notes + AI</TabBtn>
+          </div>
+          <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:18, padding:28 }}>
+            {tab==="schedule" && <div><div style={{ fontFamily:"'Syne',sans-serif", fontWeight:800, fontSize:18, color:T.text, marginBottom:20 }}>Weekly Schedule</div><ScheduleView courses={courses} T={T}/></div>}
+            {tab==="assignments" && <AssignmentsView assignments={assignments} courses={courses} onToggle={toggleAssignment} onAdd={addAssignment} T={T}/>}
+            {tab==="notes" && <NotesView courses={courses} T={T}/>}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
